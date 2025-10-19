@@ -1,6 +1,6 @@
 (executable
  (name main)
- (libraries unix str num))
+ (libraries unix str ))
 (include_subdirs unqualified)
 (env
 (dev

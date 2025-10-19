@@ -14,7 +14,7 @@
 (* succeeds silently or throws an Failure exception.       *)
 type assertion = (unit -> unit)
 
-type 'a test = 
+type 'a test =
   | GradedTest of string * int * (string * 'a) list
   | Test of string * (string * 'a) list
 
@@ -38,13 +38,13 @@ let timeout_assert (time : int) (a : assertion) : assertion =
 let timeout_test (time : int) (t : assertion test) : assertion test =
   let map_timeout l = List.map (fun (i, a) -> (i, timeout_assert time a)) l in
   match t with
-  | GradedTest (s, i, ls) -> GradedTest (s, i, map_timeout ls) 
+  | GradedTest (s, i, ls) -> GradedTest (s, i, map_timeout ls)
   | Test (s, ls) -> Test (s, map_timeout ls)
 
 let timeout_suite (time : int) (s : suite) : suite =
   List.map (timeout_test time) s
 
-let timeout_assert_const (a: assertion) : assertion = 
+let timeout_assert_const (a: assertion) : assertion =
     timeout_assert 10 a
 
 let assert_eq v1 v2 : assertion =
@@ -66,14 +66,14 @@ let assert_fail : assertion = fun () -> failwith "assert fail"
 (***************************)
 (* Generating Test Results *)
 
-type result = 
-  | Pass 
+type result =
+  | Pass
   | Fail of string
 
 type outcome = (result test) list
 
 let run_assertion (f:assertion) : result =
-  try 
+  try
     f ();
     Pass
   with
@@ -91,7 +91,7 @@ let run_test (t:assertion test) : result test =
       Printf.eprintf "Running test %s\n%!" n;
       Test(n, List.map run_case cases)
   end
-  
+
 let run_suite (s:suite):outcome =
   List.map run_test s
 
@@ -103,11 +103,11 @@ let run_suite (s:suite):outcome =
 (* Reporting functions *)
 
 let result_test_to_string (name_pts:string) (r:result test): string =
-  let string_of_case (name, res) = 
+  let string_of_case (name, res) =
      begin match res with
-      | Pass     -> "passed - " ^ name 
+      | Pass     -> "passed - " ^ name
       | Fail msg -> "FAILED - " ^ name ^ ": " ^ msg
-    end 
+    end
   in
   begin match r with
     | GradedTest (_, _, cases)
@@ -118,9 +118,9 @@ let result_test_to_string (name_pts:string) (r:result test): string =
 
 (* returns (name_pts, passed, failed, total, points_earned, max_given, max_hidden) *)
 let get_results (t:result test) =
-  let num_passed cases = 
+  let num_passed cases =
     List.fold_left (fun cnt (_,r) -> match r with Pass -> cnt + 1 | _ -> cnt) 0 cases in
-  let num_failed cases = 
+  let num_failed cases =
     List.fold_left (fun cnt (_,r) -> match r with Fail _ -> cnt + 1 | _ -> cnt) 0 cases in
   begin match t with
     | GradedTest (name,pts,cases) ->
@@ -129,7 +129,7 @@ let get_results (t:result test) =
       let total = List.length cases in
       if total > 0 then
           let points_earned = ((float_of_int passed) /. (float_of_int total)) *. (float_of_int pts) in
-          let name_pts = Printf.sprintf "%s (%1.f/%d points)" name points_earned pts in
+          let name_pts = Printf.sprintf "%s (%.0f/%d points)" name points_earned pts in
           (name_pts, passed, failed, total, points_earned, pts, 0)
         else
           let name_pts = Printf.sprintf "%s (?/%d points)" name pts in
@@ -145,16 +145,12 @@ let outcome_to_string (o:outcome):string =
   let sep = "\n---------------------------------------------------\n" in
   let helper  (passed, failed, total, pts, maxg, maxh, str) (t:result test) =
     let (name_pts, p, f, tot, s, mg, mh) = get_results t in
-    (passed + p, failed + f, total + tot, s +. pts, maxg + mg, maxh + mh, 
+    (passed + p, failed + f, total + tot, s +. pts, maxg + mg, maxh + mh,
     str ^ "\n" ^ (
-      if f > 0 then (result_test_to_string name_pts t) else 
+      if f > 0 then (result_test_to_string name_pts t) else
       if tot > 0 then (name_pts ^ ":\n  OK") else
-        (name_pts ^ ":\n  Hidden") 
+        (name_pts ^ ":\n  Hidden")
       )
     ) in
   let (p,f,tot,pts,maxg, maxh,str) = List.fold_left helper (0,0,0,0.0,0,0,"") o in
-  str ^ sep ^ (Printf.sprintf "Passed: %d/%d\nFailed: %d/%d\nScore: %1.f/%d (given)\n       ?/%d (hidden)" p tot f tot pts maxg maxh)
-  
-
-
-
+  str ^ sep ^ (Printf.sprintf "Passed: %d/%d\nFailed: %d/%d\nScore: %.0f/%d (given)\n       ?/%d (hidden)" p tot f tot pts maxg maxh)
