@@ -89,8 +89,9 @@ let lookup m x = List.assoc x m
    destination (usually a register).
 *)
 let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
-  function _ -> failwith "compile_operand unimplemented"
-
+  fun (src: Ll.operand) -> match src with
+    |Null -> (Movq, [(Imm (Lit 0L)); dest])
+    |Const x -> (Movq,[(Imm (Lit x)); dest])
 
 
 (* compiling call  ---------------------------------------------------------- *)
@@ -226,7 +227,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
 
 (* compiling blocks --------------------------------------------------------- *)
 
-(* We have left this helper function here for you to complete. 
+(* We have left this helper function here for you to complete.
    [fn] - the name of the function containing this block
    [ctxt] - the current context
    [blk]  - LLVM IR code for the block
@@ -249,8 +250,14 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
-let arg_loc (n : int) : operand =
-failwith "arg_loc not implemented"
+let arg_loc (n : int) : operand = match n with
+  | 0 -> Reg Rdi
+  | 1 -> Reg Rsi
+  | 2 -> Reg Rdx
+  | 3 -> Reg Rcx
+  | 4 -> Reg R08
+  | 5 -> Reg R09
+  | _ -> Ind3 (Lit (Int64.mul (Int64.of_int ((n-7)+2)) 8L), Rbp)
 
 
 (* We suggest that you create a helper function that computes the
