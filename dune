@@ -1,0 +1,7 @@
+(executable
+ (name main)
+ (libraries unix str num))
+(include_subdirs unqualified)
+(env
+(dev
+(flags (:standard -warn-error -A -no-strict-formats))))
