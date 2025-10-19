@@ -2,6 +2,7 @@
 
 open Ll
 open X86
+open Asm
 
 (* Overview ----------------------------------------------------------------- *)
 
@@ -221,8 +222,9 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 
    [fn] - the name of the function containing this terminator
 *)
-let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  failwith "compile_terminator not implemented"
+let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list = match t with
+  |Ret (Void,_) -> [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp]); (Retq, [])]
+  | _ -> failwith "compile_terminator not implemented"
 
 
 (* compiling blocks --------------------------------------------------------- *)
@@ -289,7 +291,12 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-failwith "compile_fdecl unimplemented"
+  let prologue= [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp])] in
+  let variable_offsets = [] in
+  let body = [] in
+  let epilogue =  compile_terminator name {tdecls = tdecls ; layout = variable_offsets} (Ret (Void,None)) in
+  [{lbl = name ; global = true ; asm = Text (prologue@body@epilogue)}]
+
 
 
 
