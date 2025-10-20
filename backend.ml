@@ -93,6 +93,9 @@ let compile_operand (ctxt:ctxt) (dest:X86.operand) : Ll.operand -> ins =
   fun (src: Ll.operand) -> match src with
     |Null -> (Movq, [(Imm (Lit 0L)); dest])
     |Const x -> (Movq,[(Imm (Lit x)); dest])
+    |Gid name -> let mangled_name = Platform.mangle name in (Leaq, [(Ind3 (Lbl mangled_name , Rip)); dest ])
+    |Id _uid -> let address = lookup ctxt.layout _uid in (Movq, [address; dest])
+
 
 
 (* compiling call  ---------------------------------------------------------- *)
@@ -200,7 +203,40 @@ failwith "compile_gep not implemented"
    - Bitcast: does nothing interesting at the assembly level
 *)
 let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
-      failwith "compile_insn not implemented"
+(*---------------------------------------------------------
+----------------------HELPER FUNCTIONS---------------------
+----------------------------------------------------------*)
+  let move_op_to_register (src:Ll.operand) (dest:reg) = compile_operand ctxt (Reg dest) src in
+(*----------------------------------------------------------*)
+  let write_to_uid (src:X86.operand) (dest:uid): X86.ins =
+    let dest_op = lookup ctxt.layout dest in
+    (Movq, [src; dest_op]) in
+(*----------------------------------------------------------*)
+let bop_to_opcode (b : Ll.bop) : X86.opcode =
+  match b with
+  | Ll.Add  -> X86.Addq
+  | Ll.Sub  -> X86.Subq
+  | Ll.Mul  -> X86.Imulq
+  | Ll.Shl  -> X86.Shlq
+  | Ll.Lshr -> X86.Shrq
+  | Ll.Ashr -> X86.Sarq
+  | Ll.And  -> X86.Andq
+  | Ll.Or   -> X86.Orq
+  | Ll.Xor  -> X86.Xorq in
+(*----------------------------------------------------------*)
+  let compile_binary_operation (op:bop) (typ:ty) (op1:Ll.operand) (op2:Ll.operand):X86.ins list =
+      let instr1 = move_op_to_register op1 Rax in
+      let isntr2 = move_op_to_register op2 Rcx in
+      let instr3 = (bop_to_opcode op, [Reg Rcx; Reg Rax]) in
+      let instr4 = write_to_uid (Reg Rax) uid in
+      [instr1; isntr2; instr3; instr4] in
+  (*---------------------------------------------------------
+  ----------------------MAIN BODY----------------------------
+  ----------------------------------------------------------*)
+  match i with
+  | Binop (op, typ, op1, op2) -> compile_binary_operation op typ op1 op2
+  | _ -> failwith "compile_insn not implemented"
+
 
 
 
@@ -235,7 +271,9 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list = ma
    [blk]  - LLVM IR code for the block
 *)
 let compile_block (fn:string) (ctxt:ctxt) (blk:Ll.block) : ins list =
-  failwith "compile_block not implemented"
+  let insns = List.flatten (List.map (compile_insn ctxt) blk.insns) in
+  let term  = compile_terminator fn ctxt (snd blk.term) in
+  insns @ term
 
 let compile_lbl_block fn lbl ctxt blk : elem =
   Asm.text (mk_lbl fn lbl) (compile_block fn ctxt blk)
@@ -252,7 +290,7 @@ let compile_lbl_block fn lbl ctxt blk : elem =
 
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
-let arg_loc (n : int) : operand = match n with
+let arg_loc (n : int) : X86.operand = match n with
   | 0 -> Reg Rdi
   | 1 -> Reg Rsi
   | 2 -> Reg Rdx
