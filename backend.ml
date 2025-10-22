@@ -238,6 +238,11 @@ let bop_to_opcode (b : Ll.bop) : X86.opcode =
   | _ -> failwith "compile_insn not implemented"
 
 
+let x86operand_of_lloperand (op:Ll.operand) (ctxt:ctxt) : X86.operand = match op with
+  | Null -> Imm (Lit 0L)
+  | Const x -> Imm (Lit x)
+  | Gid name -> Ind3 (Lbl (Platform.mangle name), Rip)
+  | Id uid -> lookup ctxt.layout uid
 
 
 (* compiling terminators  --------------------------------------------------- *)
@@ -258,9 +263,11 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 
    [fn] - the name of the function containing this terminator
 *)
-let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list = match t with
-  |Ret (Void,_) -> [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp]); (Retq, [])]
-  | _ -> failwith "compile_terminator not implemented"
+let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
+  let stack_cleanup_code= [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp])] in match t with
+  | Br lbl -> [(Jmp, [Imm (Lbl (mk_lbl fn lbl))])]
+  | Ret (Void,_) -> stack_cleanup_code@[ (Retq, [])]
+  | Ret (_,Some op) -> [(Movq, [x86operand_of_lloperand op ctxt ; ~%Rax])] @ stack_cleanup_code @ [(Retq,[])]
 
 
 (* compiling blocks --------------------------------------------------------- *)
@@ -310,7 +317,11 @@ let arg_loc (n : int) : X86.operand = match n with
 
 *)
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-failwith "stack_layout not implemented"
+  let uids_of_block b =  List.map fst b.insns in
+  let uids_of_initial_block = uids_of_block block in
+  let uids_of_labelled_blocks = (List.flatten (List.map uids_of_block (List.map snd lbled_blocks))) in
+  let all_uids = args @ uids_of_initial_block @ uids_of_labelled_blocks in
+  List.mapi (fun i uid -> let offset = Int64.mul (Int64.neg (Int64.of_int i)) 8L  in ( uid, Ind3( Lit offset,Rbp))) all_uids
 
 (* The code for the entry-point of a function must do several things:
 
@@ -329,11 +340,13 @@ failwith "stack_layout not implemented"
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-  let prologue= [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp])] in
-  let variable_offsets = [] in
-  let body = [] in
-  let epilogue =  compile_terminator name {tdecls = tdecls ; layout = variable_offsets} (Ret (Void,None)) in
-  [{lbl = name ; global = true ; asm = Text (prologue@body@epilogue)}]
+  let variable_offsets = stack_layout f_param f_cfg in
+  let num_slots = List.length variable_offsets in
+  let stack_space = Int64.mul (Int64.of_int num_slots) 8L in
+  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit stack_space); ~%Rsp])] in
+  let context =  { tdecls = tdecls ; layout = variable_offsets } in
+  let fold_block (l:elem list) ((block_name,block): lbl*block)= l @ [(compile_lbl_block name block_name context block)] in
+  Asm.gtext name (prologue@(compile_block name context (fst f_cfg))) :: List.fold_left  fold_block [] (snd f_cfg)
 
 
 
