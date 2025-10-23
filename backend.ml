@@ -252,7 +252,12 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   | Icmp (condition, ty, a, b)->
   let a_x86, b_x86 = x86operand_of_lloperand a ctxt, x86operand_of_lloperand b ctxt in
   let conditon_x86 = compile_cnd condition in
-  [(Movq,[b_x86; Reg Rax]);(Cmpq, [a_x86;Reg Rax]); (Set conditon_x86, [lookup ctxt.layout uid])]
+  let dest = lookup ctxt.layout uid in
+  [(Movq,[a_x86; Reg Rax]);
+   (Cmpq, [b_x86;Reg Rax]);
+   (Movq, [Imm (Lit 0L); Reg Rax]);
+   (Set conditon_x86, [Reg Rax]);
+   (Movq, [Reg Rax; dest])]
   | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | _ -> failwith "compile_insn not implemented"
 
