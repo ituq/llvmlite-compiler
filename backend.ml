@@ -271,7 +271,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
      (*| Id id -> [(Callq, [lookup ctxt.layout id])]*)
      | Id _ -> failwith "Function pointer is local id in call"
      | _ -> failwith "Invalid llvm function operand in call" in
-   let clean_stack = if List.length all_args > 0 then [(Addq, [Imm (Lit (Int64.mul (Int64.of_int ((List.length all_args)-6)) 8L)); Reg Rsp])] else [] in
+   let clean_stack = if List.length all_args > 6 then [(Addq, [Imm (Lit (Int64.mul (Int64.of_int ((List.length all_args)-6)) 8L)); Reg Rsp])] else [] in
    (save_args [Rdi; Rsi; Rdx; Rcx; R08; R09] all_args) @ fun_call @ clean_stack
   in
   (*---------------------------------------------------------
@@ -326,11 +326,13 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
    [fn] - the name of the function containing this terminator
 *)
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
-  let stack_cleanup_code= [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp])] in match t with
+  let stack_cleanup_code= [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp])] in
+  match t with
   | Br lbl -> [(Jmp, [Imm (Lbl (mk_lbl fn lbl))])]
   | Cbr (op, taken, not_taken) -> [(Cmpq, [Imm (Lit 1L); x86operand_of_lloperand op ctxt]); (J Eq, [Imm (Lbl (mk_lbl fn taken))]); (Jmp, [Imm (Lbl (mk_lbl fn not_taken))])]
   | Ret (Void,_) -> stack_cleanup_code@[ (Retq, [])]
   | Ret (_,Some op) -> [(Movq, [x86operand_of_lloperand op ctxt ; ~%Rax])] @ stack_cleanup_code @ [(Retq,[])]
+  | _ -> failwith "llvm terminator not implemented"
 
 
 (* compiling blocks --------------------------------------------------------- *)
@@ -406,7 +408,7 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
   let variable_offsets = stack_layout f_param f_cfg in
   let num_slots = List.length variable_offsets in
   let stack_space = Int64.mul (Int64.of_int num_slots) 8L in
-  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit stack_space); ~%Rsp])] in
+  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp])] (*(Subq, [Imm (Lit stack_space); ~%Rsp])]*) in
   let context =  { tdecls = tdecls ; layout = variable_offsets } in
   let fold_block (l:elem list) ((block_name,block): lbl*block)= l @ [(compile_lbl_block name block_name context block)] in
   Asm.gtext name (prologue@(compile_block name context (fst f_cfg))) :: List.fold_left  fold_block [] (snd f_cfg)
