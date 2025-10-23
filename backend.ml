@@ -177,6 +177,11 @@ failwith "size_ty not implemented"
 let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
 failwith "compile_gep not implemented"
 
+let x86operand_of_lloperand (op:Ll.operand) (ctxt:ctxt) : X86.operand = match op with
+  | Null -> Imm (Lit 0L)
+  | Const x -> Imm (Lit x)
+  | Gid name -> Ind3 (Lbl (Platform.mangle name), Rip)
+  | Id uid -> lookup ctxt.layout uid
 
 
 (* compiling instructions  -------------------------------------------------- *)
@@ -235,14 +240,13 @@ let bop_to_opcode (b : Ll.bop) : X86.opcode =
   ----------------------------------------------------------*)
   match i with
   | Binop (op, typ, op1, op2) -> compile_binary_operation op typ op1 op2
+  | Icmp (condition, ty, a, b)->
+  let a_x86, b_x86 = x86operand_of_lloperand a ctxt, x86operand_of_lloperand b ctxt in
+  let conditon_x86 = compile_cnd condition in
+  [(Movq,[b_x86; Reg Rax]);(Cmpq, [a_x86;Reg Rax]); (Set conditon_x86, [lookup ctxt.layout uid])]
   | _ -> failwith "compile_insn not implemented"
 
 
-let x86operand_of_lloperand (op:Ll.operand) (ctxt:ctxt) : X86.operand = match op with
-  | Null -> Imm (Lit 0L)
-  | Const x -> Imm (Lit x)
-  | Gid name -> Ind3 (Lbl (Platform.mangle name), Rip)
-  | Id uid -> lookup ctxt.layout uid
 
 
 (* compiling terminators  --------------------------------------------------- *)
@@ -266,6 +270,7 @@ let mk_lbl (fn:string) (l:string) = fn ^ "." ^ l
 let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   let stack_cleanup_code= [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp])] in match t with
   | Br lbl -> [(Jmp, [Imm (Lbl (mk_lbl fn lbl))])]
+  | Cbr (op, taken, not_taken) -> [(Cmpq, [Imm (Lit 1L); x86operand_of_lloperand op ctxt]); (J Eq, [Imm (Lbl (mk_lbl fn taken))]); (Jmp, [Imm (Lbl (mk_lbl fn not_taken))])]
   | Ret (Void,_) -> stack_cleanup_code@[ (Retq, [])]
   | Ret (_,Some op) -> [(Movq, [x86operand_of_lloperand op ctxt ; ~%Rax])] @ stack_cleanup_code @ [(Retq,[])]
 
