@@ -226,17 +226,17 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let dest_op = lookup ctxt.layout dest in
     (Movq, [src; dest_op]) in
 (*----------------------------------------------------------*)
-let bop_to_opcode (b : Ll.bop) : X86.opcode =
-  match b with
-  | Ll.Add  -> X86.Addq
-  | Ll.Sub  -> X86.Subq
-  | Ll.Mul  -> X86.Imulq
-  | Ll.Shl  -> X86.Shlq
-  | Ll.Lshr -> X86.Shrq
-  | Ll.Ashr -> X86.Sarq
-  | Ll.And  -> X86.Andq
-  | Ll.Or   -> X86.Orq
-  | Ll.Xor  -> X86.Xorq in
+  let bop_to_opcode (b : Ll.bop) : X86.opcode =
+    match b with
+    | Ll.Add  -> X86.Addq
+    | Ll.Sub  -> X86.Subq
+    | Ll.Mul  -> X86.Imulq
+    | Ll.Shl  -> X86.Shlq
+    | Ll.Lshr -> X86.Shrq
+    | Ll.Ashr -> X86.Sarq
+    | Ll.And  -> X86.Andq
+    | Ll.Or   -> X86.Orq
+    | Ll.Xor  -> X86.Xorq in
 (*----------------------------------------------------------*)
   let compile_binary_operation (op:bop) (typ:ty) (op1:Ll.operand) (op2:Ll.operand):X86.ins list =
       let instr1 = move_op_to_register op1 Rax in
@@ -253,8 +253,8 @@ let bop_to_opcode (b : Ll.bop) : X86.opcode =
   let a_x86, b_x86 = x86operand_of_lloperand a ctxt, x86operand_of_lloperand b ctxt in
   let conditon_x86 = compile_cnd condition in
   [(Movq,[b_x86; Reg Rax]);(Cmpq, [a_x86;Reg Rax]); (Set conditon_x86, [lookup ctxt.layout uid])]
+  | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | _ -> failwith "compile_insn not implemented"
-
 
 
 
