@@ -259,6 +259,19 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let range x = List.init (x + 1) (fun i -> i) in
     (* Example: range 5 returns [0; 1; 2; 3; 4; 5] *)
     (Movq,[dest; ~%Rcx]):: (List.flatten @@ List.map (fun i-> [(Movq,[Ind3 (Lit (Int64.of_int i), Rax); ~%Rcx]); (Incq,[~%Rcx]);(Incq,[~%Rax])]) (range (Int64.to_int n)))
+(*----------------------------------------------------------*)
+  let call_helper (fun_ptr:Ll.operand) (all_args:(Ll.ty * Ll.operand) list):ins list =
+   let rec save_args (regs: reg list) (args:(Ll.ty * Ll.operand) list):ins list = match (regs, args) with
+     | (_, []) -> []
+     | (next_reg::rest_regs, (_, next_arg)::rest_args) -> [move_op_to_register next_arg next_reg] @ save_args rest_regs rest_args
+     | ([], (_, next_arg)::rest_args) -> save_args [] rest_args @ [(Pushq, [x86operand_of_lloperand next_arg ctxt])] in
+   let fun_call = match fun_ptr with
+     | Gid id -> [(Callq, [Imm (Lbl (Platform.mangle id))])]
+     (*| Id id -> [(Callq, [lookup ctxt.layout id])]*)
+     | Id _ -> failwith "Function pointer is local id in call"
+     | _ -> failwith "Invalid llvm function operand in call" in
+   let clean_stack = if List.length all_args > 0 then [(Addq, [Imm (Lit (Int64.mul (Int64.of_int ((List.length all_args)-6)) 8L)); Reg Rsp])] else [] in
+   (save_args [Rdi; Rsi; Rdx; Rcx; R08; R09] all_args) @ fun_call @ clean_stack
   in
   (*---------------------------------------------------------
   ----------------------MAIN BODY----------------------------
@@ -287,6 +300,9 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
         [(Movq,[x86operand_of_lloperand src ctxt; ~%Rax])] @ write_bytes_to_x87_op (Imm (Lbl mangled)) ty
       | Id _ -> failwith "id missing in store" )
   | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
+  | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp]); write_to_uid ~%Rsp uid]
+  | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
+  | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ [write_to_uid (~%Rax) uid] (*doesnt handel/check for invalid functions/return types*)
   | _ -> failwith "compile_insn not implemented"
 
 
