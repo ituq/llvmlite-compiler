@@ -272,7 +272,9 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
    (Movq, [Imm (Lit 0L); Reg Rax]);
    (Set conditon_x86, [Reg Rax]);
    (Movq, [Reg Rax; dest])]
-  | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
+  | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp]); write_to_uid ~%Rsp uid]
+  | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
+  | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ [write_to_uid (~%Rax) uid] (*doesnt handel/check for invalid functions/return types*)
   | _ -> failwith "compile_insn not implemented"
 
 
