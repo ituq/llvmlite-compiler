@@ -259,6 +259,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let range x = List.init (x + 1) (fun i -> i) in
     (* Example: range 5 returns [0; 1; 2; 3; 4; 5] *)
     (Movq,[dest; ~%Rcx]):: (List.flatten @@ List.map (fun i-> [(Movq,[Ind3 (Lit (Int64.of_int i), Rax); ~%Rcx]); (Incq,[~%Rcx]);(Incq,[~%Rax])]) (range (Int64.to_int n)))
+  in
 (*----------------------------------------------------------*)
   let call_helper (fun_ptr:Ll.operand) (all_args:(Ll.ty * Ll.operand) list):ins list =
    let rec save_args (regs: reg list) (args:(Ll.ty * Ll.operand) list):ins list = match (regs, args) with
@@ -299,7 +300,6 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
         let mangled = Platform.mangle id in
         [(Movq,[x86operand_of_lloperand src ctxt; ~%Rax])] @ write_bytes_to_x87_op (Imm (Lbl mangled)) ty
       | Id _ -> failwith "id missing in store" )
-  | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
   | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ [write_to_uid (~%Rax) uid] (*doesnt handel/check for invalid functions/return types*)
