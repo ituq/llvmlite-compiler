@@ -226,6 +226,14 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let dest_op = lookup ctxt.layout dest in
     (Movq, [src; dest_op]) in
 (*----------------------------------------------------------*)
+
+  let write_ptr_to_rax (ptr:Ll.operand): X86.ins = match ptr with
+    |Null -> (Movq, [(Imm (Lit 0L)); Reg Rax])
+    |Const x -> (Movq,[(Imm (Lit x)); Reg Rax])
+    |Gid name -> let mangled_name = Platform.mangle name in (Leaq, [(Ind3 (Lbl mangled_name , Rip)); Reg Rax])
+    |Id _uid -> let address = lookup ctxt.layout _uid in (Movq, [address;Reg Rax])
+  in
+(*----------------------------------------------------------*)
   let bop_to_opcode (b : Ll.bop) : X86.opcode =
     match b with
     | Ll.Add  -> X86.Addq
@@ -244,6 +252,14 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       let instr3 = (bop_to_opcode op, [Reg Rcx; Reg Rax]) in
       let instr4 = write_to_uid (Reg Rax) uid in
       [instr1; isntr2; instr3; instr4] in
+  (*----------------------------------------------------------*)
+  let write_bytes_to_x87_op (dest:X86.operand) (ty:ty)=
+    (*src pointer is always rax*)
+    let n =Int64.of_int @@ size_ty ctxt.tdecls ty in
+    let range x = List.init (x + 1) (fun i -> i) in
+    (* Example: range 5 returns [0; 1; 2; 3; 4; 5] *)
+    (Movq,[dest; ~%Rcx]):: (List.flatten @@ List.map (fun i-> [(Movq,[Ind3 (Lit (Int64.of_int i), Rax); ~%Rcx]); (Incq,[~%Rcx]);(Incq,[~%Rax])]) (range (Int64.to_int n)))
+  in
   (*---------------------------------------------------------
   ----------------------MAIN BODY----------------------------
   ----------------------------------------------------------*)
@@ -258,6 +274,18 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
    (Movq, [Imm (Lit 0L); Reg Rax]);
    (Set conditon_x86, [Reg Rax]);
    (Movq, [Reg Rax; dest])]
+  | Load (ty, op) ->
+    if ty <> lookup ctxt.tdecls uid
+      then failwith "Load type mismatch"
+      else [(Movq, [x86operand_of_lloperand op ctxt; ~%Rax])]@write_bytes_to_x87_op (lookup ctxt.layout uid) (ty)
+  | Store (ty, src, dest) ->
+    if ty <> lookup ctxt.tdecls uid then failwith "Load type mismatch"
+    else ( match dest with
+      | Null | Const _ -> failwith "invalid pointer in Store"
+      | Gid id ->
+        let mangled = Platform.mangle id in
+        [(Movq,[x86operand_of_lloperand src ctxt; ~%Rax])] @ write_bytes_to_x87_op (Imm (Lbl mangled)) ty
+      | Id _ -> failwith "id missing in store" )
   | Alloca t -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | _ -> failwith "compile_insn not implemented"
 
