@@ -363,12 +363,12 @@ let compile_lbl_block fn lbl ctxt blk : elem =
    [ NOTE: the first six arguments are numbered 0 .. 5 ]
 *)
 let arg_loc (n : int) : X86.operand = match n with
-  | 0 -> Reg Rdi
-  | 1 -> Reg Rsi
-  | 2 -> Reg Rdx
-  | 3 -> Reg Rcx
-  | 4 -> Reg R08
-  | 5 -> Reg R09
+  | 0 -> ~%Rdi
+  | 1 -> ~%Rsi
+  | 2 -> ~%Rdx
+  | 3 -> ~%Rcx
+  | 4 -> ~%R08
+  | 5 -> ~%R09
   | _ -> Ind3 (Lit (Int64.mul (Int64.of_int ((n-7)+2)) 8L), Rbp)
 
 
@@ -386,7 +386,8 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
   let uids_of_initial_block = uids_of_block block in
   let uids_of_labelled_blocks = (List.flatten (List.map uids_of_block (List.map snd lbled_blocks))) in
   let all_uids = args @ uids_of_initial_block @ uids_of_labelled_blocks in
-  List.mapi (fun i uid -> let offset = Int64.mul (Int64.neg (Int64.of_int i)) 8L  in ( uid, Ind3( Lit offset,Rbp))) all_uids
+  List.mapi (fun i uid -> let offset = Int64.mul (Int64.neg (Int64.of_int (i + 1))) 8L  in
+  ( uid, Ind3( Lit offset,Rbp))) all_uids
 
 (* The code for the entry-point of a function must do several things:
 
@@ -405,13 +406,19 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
      to hold all of the local stack slots.
 *)
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
-  let variable_offsets = stack_layout f_param f_cfg in
-  let num_slots = List.length variable_offsets in
-  let stack_space = Int64.mul (Int64.of_int num_slots) 8L in
-  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp])] (*(Subq, [Imm (Lit stack_space); ~%Rsp])]*) in
-  let context =  { tdecls = tdecls ; layout = variable_offsets } in
+  let arg_uid = stack_layout f_param f_cfg in
+  (*----------------------------------------------------------*)
+  let write_to_uid (src:X86.operand) (dest:uid): X86.ins =
+    let dest_op = lookup arg_uid dest in
+    (Movq, [src; dest_op]) in
+  (*----------------------------------------------------------*)
+  let args_mover (uid:uid) (push_ins:ins list):ins list = (write_to_uid (arg_loc (List.length push_ins)) uid)::push_ins in
+  let mover_ins = List.fold_right args_mover f_param [] in
+  (*----------------------------------------------------------*)
+  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit (Int64.mul 8L (Int64.of_int (List.length arg_uid)))); ~%Rsp])] in
+  let context =  { tdecls = tdecls ; layout = arg_uid } in
   let fold_block (l:elem list) ((block_name,block): lbl*block)= l @ [(compile_lbl_block name block_name context block)] in
-  Asm.gtext name (prologue@(compile_block name context (fst f_cfg))) :: List.fold_left  fold_block [] (snd f_cfg)
+  Asm.gtext name (prologue@mover_ins@(compile_block name context (fst f_cfg))) :: List.fold_left  fold_block [] (snd f_cfg)
 
 
 
