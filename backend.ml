@@ -222,9 +222,9 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
 ----------------------------------------------------------*)
   let move_op_to_register (src:Ll.operand) (dest:reg) = compile_operand ctxt (Reg dest) src in
 (*----------------------------------------------------------*)
-  let write_to_uid (src:X86.operand) (dest:uid): X86.ins =
-    let dest_op = lookup ctxt.layout dest in
-    (Movq, [src; dest_op]) in
+  let write_to_uid (src:X86.operand) (dest:uid): X86.ins list = match src with
+    | Ind3 _ -> [(Movq, [src; ~%Rax]); (Movq, [~%Rax; (lookup ctxt.layout dest)])]
+    | _ -> [(Movq, [src; (lookup ctxt.layout dest)])] in
 (*----------------------------------------------------------*)
 
   let write_ptr_to_rax (ptr:Ll.operand): X86.ins = match ptr with
@@ -251,7 +251,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       let isntr2 = move_op_to_register op2 Rcx in
       let instr3 = (bop_to_opcode op, [Reg Rcx; Reg Rax]) in
       let instr4 = write_to_uid (Reg Rax) uid in
-      [instr1; isntr2; instr3; instr4] in
+      [instr1; isntr2; instr3]@instr4 in
   (*----------------------------------------------------------*)
   let write_bytes_to_x87_op (dest:X86.operand) (ty:ty)=
     (*src pointer is always rax*)
@@ -284,11 +284,12 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let conditon_x86 = compile_cnd condition in
     let dest = lookup ctxt.layout uid in
     [(Movq,[a_x86; Reg Rax]); (Cmpq, [b_x86;Reg Rax]); (Movq, [Imm (Lit 0L); Reg Rax]); (Set conditon_x86, [Reg Rax]); (Movq, [Reg Rax; dest])]
-  | Load (ty, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx]); write_to_uid (~%Rcx) uid]
-  | Store (ty, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])]
-  | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp]); write_to_uid ~%Rsp uid]
+  | Load (ty, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx])]@(write_to_uid (~%Rcx) uid) (*only 64bit types and no type checks*)
+  | Store (ty, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])] (*only 64bit types and no type checks*)
+  | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp])]@(write_to_uid ~%Rsp uid)
   | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
-  | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ [write_to_uid (~%Rax) uid] (*doesnt handel/check for invalid functions/return types*)
+  | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ (write_to_uid (~%Rax) uid) (*doesnt handel/check for invalid functions/return types*)
+  | Bitcast (_, op, _) -> write_to_uid (x86operand_of_lloperand op ctxt) uid
   | _ -> failwith "compile_insn not implemented"
 
 
