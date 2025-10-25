@@ -280,26 +280,12 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   match i with
   | Binop (op, typ, op1, op2) -> compile_binary_operation op typ op1 op2
   | Icmp (condition, ty, a, b)->
-  let a_x86, b_x86 = x86operand_of_lloperand a ctxt, x86operand_of_lloperand b ctxt in
-  let conditon_x86 = compile_cnd condition in
-  let dest = lookup ctxt.layout uid in
-  [(Movq,[a_x86; Reg Rax]);
-   (Cmpq, [b_x86;Reg Rax]);
-   (Movq, [Imm (Lit 0L); Reg Rax]);
-   (Set conditon_x86, [Reg Rax]);
-   (Movq, [Reg Rax; dest])]
-  | Load (ty, op) ->
-    if ty <> lookup ctxt.tdecls uid
-      then failwith "Load type mismatch"
-      else [(Movq, [x86operand_of_lloperand op ctxt; ~%Rax])]@write_bytes_to_x87_op (lookup ctxt.layout uid) (ty)
-  | Store (ty, src, dest) ->
-    if ty <> lookup ctxt.tdecls uid then failwith "Load type mismatch"
-    else ( match dest with
-      | Null | Const _ -> failwith "invalid pointer in Store"
-      | Gid id ->
-        let mangled = Platform.mangle id in
-        [(Movq,[x86operand_of_lloperand src ctxt; ~%Rax])] @ write_bytes_to_x87_op (Imm (Lbl mangled)) ty
-      | Id _ -> failwith "id missing in store" )
+    let a_x86, b_x86 = x86operand_of_lloperand a ctxt, x86operand_of_lloperand b ctxt in
+    let conditon_x86 = compile_cnd condition in
+    let dest = lookup ctxt.layout uid in
+    [(Movq,[a_x86; Reg Rax]); (Cmpq, [b_x86;Reg Rax]); (Movq, [Imm (Lit 0L); Reg Rax]); (Set conditon_x86, [Reg Rax]); (Movq, [Reg Rax; dest])]
+  | Load (ty, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx]); write_to_uid (~%Rcx) uid]
+  | Store (ty, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])]
   | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp]); write_to_uid ~%Rsp uid]
   | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
   | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ [write_to_uid (~%Rax) uid] (*doesnt handel/check for invalid functions/return types*)
