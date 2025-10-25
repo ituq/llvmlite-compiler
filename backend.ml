@@ -369,7 +369,7 @@ let arg_loc (n : int) : X86.operand = match n with
   | 3 -> ~%Rcx
   | 4 -> ~%R08
   | 5 -> ~%R09
-  | _ -> Ind3 (Lit (Int64.mul (Int64.of_int ((n-7)+2)) 8L), Rbp)
+  | _ -> Ind3 (Lit (Int64.mul (Int64.of_int (n-4)) 8L), Rbp) (*Nicht mehr wie in den slides weil dort 1-indexing genutz wird, wir aber alles mit 0-indexing geschrieben haben*)
 
 
 (* We suggest that you create a helper function that computes the
@@ -408,12 +408,11 @@ let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
 let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg }:fdecl) : prog =
   let arg_uid = stack_layout f_param f_cfg in
   (*----------------------------------------------------------*)
-  let write_to_uid (src:X86.operand) (dest:uid): X86.ins =
-    let dest_op = lookup arg_uid dest in
-    (Movq, [src; dest_op]) in
+  let write_to_uid (src:X86.operand) (dest:uid): X86.ins list = match src with
+      | Ind3 _ -> [(Movq, [src; ~%Rax]); (Movq, [~%Rax; (lookup arg_uid dest)])]
+      | _ -> [(Movq, [src; (lookup arg_uid dest)])] in
   (*----------------------------------------------------------*)
-  let args_mover (uid:uid) (push_ins:ins list):ins list = (write_to_uid (arg_loc (List.length push_ins)) uid)::push_ins in
-  let mover_ins = List.fold_right args_mover f_param [] in
+  let mover_ins =  List.flatten (List.mapi (fun i uid -> write_to_uid (arg_loc i) uid) f_param) in
   (*----------------------------------------------------------*)
   let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit (Int64.mul 8L (Int64.of_int (List.length arg_uid)))); ~%Rsp])] in
   let context =  { tdecls = tdecls ; layout = arg_uid } in
