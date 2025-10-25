@@ -381,13 +381,21 @@ let arg_loc (n : int) : X86.operand = match n with
    - see the discussion about locals
 
 *)
+
+
 let stack_layout (args : uid list) ((block, lbled_blocks):cfg) : layout =
-  let uids_of_block b =  List.map fst b.insns in
+  let insn_assigns (uid, insn) = match insn with
+    | Store _ -> false
+    | Call (Void, _, _) -> false
+    | _ -> true
+  in
+  let uids_of_block b = List.map fst (List.filter insn_assigns b.insns) in
   let uids_of_initial_block = uids_of_block block in
   let uids_of_labelled_blocks = (List.flatten (List.map uids_of_block (List.map snd lbled_blocks))) in
   let all_uids = args @ uids_of_initial_block @ uids_of_labelled_blocks in
   List.mapi (fun i uid -> let offset = Int64.mul (Int64.neg (Int64.of_int (i + 1))) 8L  in
   ( uid, Ind3( Lit offset,Rbp))) all_uids
+
 
 (* The code for the entry-point of a function must do several things:
 
@@ -414,7 +422,8 @@ let compile_fdecl (tdecls:(tid * ty) list) (name:string) ({ f_ty; f_param; f_cfg
   (*----------------------------------------------------------*)
   let mover_ins =  List.flatten (List.mapi (fun i uid -> write_to_uid (arg_loc i) uid) f_param) in
   (*----------------------------------------------------------*)
-  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit (Int64.mul 8L (Int64.of_int (List.length arg_uid)))); ~%Rsp])] in
+  let aligned_bytes = Int64.mul (Int64.div (Int64.add ( Int64.mul (Int64.of_int (List.length arg_uid)) 8L) 15L) 16L) 16L in
+  let prologue = [(Pushq, [~%Rbp]); (Movq , [~%Rsp; ~%Rbp]); (Subq, [Imm (Lit aligned_bytes); ~%Rsp])] in
   let context =  { tdecls = tdecls ; layout = arg_uid } in
   let fold_block (l:elem list) ((block_name,block): lbl*block)= l @ [(compile_lbl_block name block_name context block)] in
   Asm.gtext name (prologue@mover_ins@(compile_block name context (fst f_cfg))) :: List.fold_left  fold_block [] (snd f_cfg)
