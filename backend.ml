@@ -252,14 +252,7 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
       let instr3 = (bop_to_opcode op, [Reg Rcx; Reg Rax]) in
       let instr4 = write_to_uid (Reg Rax) uid in
       [instr1; isntr2; instr3]@instr4 in
-  (*----------------------------------------------------------*)
-  let write_bytes_to_x87_op (dest:X86.operand) (ty:ty)=
-    (*src pointer is always rax*)
-    let n =Int64.of_int @@ size_ty ctxt.tdecls ty in
-    let range x = List.init (x + 1) (fun i -> i) in
-    (* Example: range 5 returns [0; 1; 2; 3; 4; 5] *)
-    (Movq,[dest; ~%Rcx]):: (List.flatten @@ List.map (fun i-> [(Movq,[Ind3 (Lit (Int64.of_int i), Rax); ~%Rcx]); (Incq,[~%Rcx]);(Incq,[~%Rax])]) (range (Int64.to_int n)))
-  in
+(*----------------------------------------------------------*)
 (*----------------------------------------------------------*)
   let call_helper (fun_ptr:Ll.operand) (all_args:(Ll.ty * Ll.operand) list):ins list =
    let rec save_args (regs: reg list) (args:(Ll.ty * Ll.operand) list):ins list = match (regs, args) with
@@ -274,6 +267,70 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
    let clean_stack = if List.length all_args > 6 then [(Addq, [Imm (Lit (Int64.mul (Int64.of_int ((List.length all_args)-6)) 8L)); Reg Rsp])] else [] in
    (save_args [Rdi; Rsi; Rdx; Rcx; R08; R09] all_args) @ fun_call @ clean_stack
   in
+  (*----------------------------------------------------------*)
+  (*----------------------------------------------------------*)
+  (*----------------------------------------------------------*)
+  let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
+    let (base_ty, base_op) = op in
+    let rec step (cur_ty:Ll.ty) (idxs:Ll.operand list) (acc:ins list) : ins list =
+      match idxs with
+      | [] -> List.rev acc
+      | idx :: rest ->
+        begin match cur_ty with
+        | Namedt id ->
+            let real = lookup ctxt.tdecls id in
+            step real (idx :: rest) acc
+
+        | Ptr t ->
+            (* First index across siblings of [t]: scale by sizeof(t) *)
+            let sz = size_ty ctxt.tdecls t in
+            let ins = [
+              compile_operand ctxt ~%Rcx idx;
+              (Imulq, [Imm (Lit (Int64.of_int sz)); ~%Rcx]);
+              (Addq,  [~%Rcx; ~%Rax])
+            ] in
+            step t rest (List.rev_append ins acc)
+
+        | Array (_n, t) ->
+            (* Index inside array: scale by sizeof(element t) *)
+            let elem_sz = size_ty ctxt.tdecls t in
+            let ins = [
+              compile_operand ctxt ~%Rcx idx;
+              (Imulq, [Imm (Lit (Int64.of_int elem_sz)); ~%Rcx]);
+              (Addq,  [~%Rcx; ~%Rax])
+            ] in
+            step t rest (List.rev_append ins acc)
+
+        | Struct ts ->
+            (* Struct index must be constant; add offset of prior fields *)
+            begin match idx with
+            | Const m ->
+                let mi = Int64.to_int m in
+                let rec field_off i acc_size =
+                  if i >= mi then acc_size
+                  else field_off (i+1) (acc_size + size_ty ctxt.tdecls (List.nth ts i))
+                in
+                let bump = field_off 0 0 in
+                let ins = if bump = 0 then [] else [(Addq, [Imm (Lit (Int64.of_int bump)); ~%Rax])] in
+                let field_ty = List.nth ts mi in
+                step field_ty rest (List.rev_append ins acc)
+            | _ ->
+                failwith "GEP: struct index must be a constant"
+            end
+
+        | I1 | I8 | I64 | Fun _ | Void ->
+            failwith "GEP: invalid type/index path"
+        end
+    in
+    (* Normalize the annotated type: if it is already Ptr t, use t. *)
+    let pointee_ty =
+      match base_ty with
+      | Ptr t -> t
+      | _ -> base_ty
+    in
+    let base = compile_operand ctxt ~%Rax base_op in
+    base :: (step (Ptr pointee_ty) path []) @ (write_to_uid ~%Rax uid)
+  in
   (*---------------------------------------------------------
   ----------------------MAIN BODY----------------------------
   ----------------------------------------------------------*)
@@ -284,12 +341,23 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let conditon_x86 = compile_cnd condition in
     let dest = lookup ctxt.layout uid in
     [(Movq,[a_x86; Reg Rax]); (Cmpq, [b_x86;Reg Rax]); (Movq, [Imm (Lit 0L); Reg Rax]); (Set conditon_x86, [Reg Rax]); (Movq, [Reg Rax; dest])]
-  | Load (ty, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx])]@(write_to_uid (~%Rcx) uid) (*only 64bit types and no type checks*)
+
+  | Load (Struct ty, ptr) -> failwith "Load struct not implemented"
+  | Load (Array (length, ty) , ptr) -> failwith "Load array not implemented"
+  | Load (_, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx])]@(write_to_uid (~%Rcx) uid) (*only 64bit types and no type checks*)
+
+  | Store (Struct ty, scr, ptr) -> failwith "Store struct not implemented"
+  | Store (Array (length, ty), scr , ptr) -> failwith "Store array not implemented"
   | Store (ty, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])] (*only 64bit types and no type checks*)
+
   | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp])]@(write_to_uid ~%Rsp uid)
+
   | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
   | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ (write_to_uid (~%Rax) uid) (*doesnt handel/check for invalid functions/return types*)
-  | Bitcast (_, op, _) -> write_to_uid (x86operand_of_lloperand op ctxt) uid
+
+  | Bitcast (_, op, _) -> [compile_operand ctxt ~%Rax op] @ (write_to_uid ~%Rax uid)
+  | Gep (ty, op, indices) -> compile_gep ctxt (ty, op) indices
+
   | _ -> failwith "compile_insn not implemented"
 
 
