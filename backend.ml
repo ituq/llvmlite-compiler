@@ -269,67 +269,29 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
   in
   (*----------------------------------------------------------*)
   (*----------------------------------------------------------*)
-  (*----------------------------------------------------------*)
-  let compile_gep (ctxt:ctxt) (op : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
-    let (base_ty, base_op) = op in
-    let rec step (cur_ty:Ll.ty) (idxs:Ll.operand list) (acc:ins list) : ins list =
-      match idxs with
+  let compile_gep (ctxt:ctxt) ((base_ty, base_op) : Ll.ty * Ll.operand) (path: Ll.operand list) : ins list =
+    let rec step (cur_ty:Ll.ty) (idxs:Ll.operand list) (acc:ins list) : ins list = match idxs with
       | [] -> List.rev acc
-      | idx :: rest ->
-        begin match cur_ty with
-        | Namedt id ->
-            let real = lookup ctxt.tdecls id in
-            step real (idx :: rest) acc
-
-        | Ptr t ->
-            (* First index across siblings of [t]: scale by sizeof(t) *)
-            let sz = size_ty ctxt.tdecls t in
-            let ins = [
-              compile_operand ctxt ~%Rcx idx;
-              (Imulq, [Imm (Lit (Int64.of_int sz)); ~%Rcx]);
-              (Addq,  [~%Rcx; ~%Rax])
-            ] in
-            step t rest (List.rev_append ins acc)
-
-        | Array (_n, t) ->
-            (* Index inside array: scale by sizeof(element t) *)
-            let elem_sz = size_ty ctxt.tdecls t in
-            let ins = [
-              compile_operand ctxt ~%Rcx idx;
-              (Imulq, [Imm (Lit (Int64.of_int elem_sz)); ~%Rcx]);
-              (Addq,  [~%Rcx; ~%Rax])
-            ] in
-            step t rest (List.rev_append ins acc)
-
-        | Struct ts ->
-            (* Struct index must be constant; add offset of prior fields *)
-            begin match idx with
-            | Const m ->
-                let mi = Int64.to_int m in
-                let rec field_off i acc_size =
-                  if i >= mi then acc_size
-                  else field_off (i+1) (acc_size + size_ty ctxt.tdecls (List.nth ts i))
-                in
-                let bump = field_off 0 0 in
-                let ins = if bump = 0 then [] else [(Addq, [Imm (Lit (Int64.of_int bump)); ~%Rax])] in
-                let field_ty = List.nth ts mi in
-                step field_ty rest (List.rev_append ins acc)
-            | _ ->
-                failwith "GEP: struct index must be a constant"
-            end
-
-        | I1 | I8 | I64 | Fun _ | Void ->
-            failwith "GEP: invalid type/index path"
+      | idx :: rest -> begin match cur_ty with
+        | Namedt id -> step (lookup ctxt.tdecls id) (idx :: rest) acc
+        | Ptr t -> step t rest (List.rev_append [compile_operand ctxt ~%Rcx idx; (Imulq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rcx]); (Addq,  [~%Rcx; ~%Rax])] acc)
+        | Array (_n, t) -> step t rest (List.rev_append [compile_operand ctxt ~%Rcx idx; (Imulq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls t))); ~%Rcx]); (Addq,  [~%Rcx; ~%Rax])] acc)
+        | Struct ts -> begin match idx with
+          | Const m ->
+            let rec field_off i acc_size = if i >= (Int64.to_int m) then acc_size else field_off (i+1) (acc_size + size_ty ctxt.tdecls (List.nth ts i)) in
+            let ins = if (field_off 0 0) = 0 then [] else [(Addq, [Imm (Lit (Int64.of_int (field_off 0 0))); ~%Rax])] in
+            step (List.nth ts (Int64.to_int m)) rest (List.rev_append ins acc)
+          | _ -> failwith "gep struct index must be a constant"
+          end
+        | _ -> failwith "gep invalid argument"
         end
     in
-    (* Normalize the annotated type: if it is already Ptr t, use t. *)
     let pointee_ty =
       match base_ty with
       | Ptr t -> t
       | _ -> base_ty
     in
-    let base = compile_operand ctxt ~%Rax base_op in
-    base :: (step (Ptr pointee_ty) path []) @ (write_to_uid ~%Rax uid)
+    (compile_operand ctxt ~%Rax base_op) :: (step (Ptr pointee_ty) path []) @ (write_to_uid ~%Rax uid)
   in
   (*---------------------------------------------------------
   ----------------------MAIN BODY----------------------------
@@ -342,15 +304,16 @@ let compile_insn (ctxt:ctxt) ((uid:uid), (i:Ll.insn)) : X86.ins list =
     let dest = lookup ctxt.layout uid in
     [(Movq,[a_x86; Reg Rax]); (Cmpq, [b_x86;Reg Rax]); (Movq, [Imm (Lit 0L); Reg Rax]); (Set conditon_x86, [Reg Rax]); (Movq, [Reg Rax; dest])]
 
-  | Load (Struct ty, ptr) -> failwith "Load struct not implemented"
-  | Load (Array (length, ty) , ptr) -> failwith "Load array not implemented"
+  | Load (Struct _, _) -> failwith "Load struct not implemented"
+  | Load (Array (_, _) , _) -> failwith "Load array not implemented"
   | Load (_, ptr) -> [move_op_to_register ptr Rax; (Movq, [Ind3 (Lit 0L, Rax); ~%Rcx])]@(write_to_uid (~%Rcx) uid) (*only 64bit types and no type checks*)
 
-  | Store (Struct ty, scr, ptr) -> failwith "Store struct not implemented"
-  | Store (Array (length, ty), scr , ptr) -> failwith "Store array not implemented"
-  | Store (ty, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])] (*only 64bit types and no type checks*)
+  | Store (Struct _, _, _) -> failwith "Store struct not implemented"
+  | Store (Array (_, _), _ , _) -> failwith "Store array not implemented"
+  | Store (_, src, ptr) -> [move_op_to_register src Rax; move_op_to_register ptr Rcx; (Movq, [~%Rax; Ind3 (Lit 0L, Rcx)])] (*only 64bit types and no type checks*)
 
-  | Alloca typ -> [(Subq, [Imm (Lit (Int64.of_int (size_ty ctxt.tdecls typ))); ~%Rsp])]@(write_to_uid ~%Rsp uid)
+  | Alloca typ -> let aligned = if (size_ty ctxt.tdecls typ) = 0 then 0 else (((size_ty ctxt.tdecls typ) + 15) / 16) * 16 in
+      (if aligned = 0 then [] else [(Subq, [Imm (Lit (Int64.of_int aligned)); ~%Rsp])])@(write_to_uid ~%Rsp uid)
 
   | Call (Void, fun_ptr, args) -> call_helper fun_ptr args
   | Call (_, fun_ptr, args) -> (call_helper fun_ptr args) @ (write_to_uid (~%Rax) uid) (*doesnt handel/check for invalid functions/return types*)
@@ -384,7 +347,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   let stack_cleanup_code= [(Movq , [~%Rbp; ~%Rsp]); (Popq, [~%Rbp])] in
   match t with
   | Br lbl -> [(Jmp, [Imm (Lbl (mk_lbl fn lbl))])]
-  | Cbr (op, taken, not_taken) -> [(Cmpq, [Imm (Lit 1L); x86operand_of_lloperand op ctxt]); (J Eq, [Imm (Lbl (mk_lbl fn taken))]); (Jmp, [Imm (Lbl (mk_lbl fn not_taken))])]
+  | Cbr (op, taken, not_taken) -> [(compile_operand ctxt ~%Rax op); (Cmpq, [Imm (Lit 1L); ~%Rax]); (J Eq, [Imm (Lbl (mk_lbl fn taken))]); (Jmp, [Imm (Lbl (mk_lbl fn not_taken))])]
   | Ret (Void,_) -> stack_cleanup_code@[ (Retq, [])]
   | Ret (_,Some op) -> [(Movq, [x86operand_of_lloperand op ctxt ; ~%Rax])] @ stack_cleanup_code @ [(Retq,[])]
   | _ -> failwith "llvm terminator not implemented"
