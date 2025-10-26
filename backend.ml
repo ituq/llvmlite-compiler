@@ -349,7 +349,7 @@ let compile_terminator (fn:string) (ctxt:ctxt) (t:Ll.terminator) : ins list =
   | Br lbl -> [(Jmp, [Imm (Lbl (mk_lbl fn lbl))])]
   | Cbr (op, taken, not_taken) -> [(compile_operand ctxt ~%Rax op); (Cmpq, [Imm (Lit 1L); ~%Rax]); (J Eq, [Imm (Lbl (mk_lbl fn taken))]); (Jmp, [Imm (Lbl (mk_lbl fn not_taken))])]
   | Ret (Void,_) -> stack_cleanup_code@[ (Retq, [])]
-  | Ret (_,Some op) -> [(Movq, [x86operand_of_lloperand op ctxt ; ~%Rax])] @ stack_cleanup_code @ [(Retq,[])]
+  | Ret (_,Some op) -> [compile_operand ctxt ~%Rax op] @ stack_cleanup_code @ [(Retq,[])]
   | _ -> failwith "llvm terminator not implemented"
 
 
